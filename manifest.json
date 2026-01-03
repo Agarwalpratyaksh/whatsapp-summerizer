@@ -1,0 +1,23 @@
+{
+  "manifest_version": 3,
+  "name": "WhatsApp Group Summarizer",
+  "version": "1.0.0",
+  "permissions": ["sidePanel", "activeTab", "scripting"],
+  "host_permissions": ["https://web.whatsapp.com/*"],
+  "side_panel": {
+    "default_path": "index.html" 
+  },
+  "action": {
+    "default_title": "Open Summarizer"
+  },
+  "content_scripts": [
+    {
+      "matches": ["https://web.whatsapp.com/*"],
+      "js": ["src/content/content.js"]
+    }
+  ],
+  "background": {
+    "service_worker": "src/background/background.js",
+    "type": "module"
+  }
+}
