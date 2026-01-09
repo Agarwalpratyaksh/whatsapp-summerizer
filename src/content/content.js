@@ -102,11 +102,13 @@ function updateCaptureUI() {
   if (overlay && captureActive) {
     const count = capturedMessagesMap.size;
     overlay.innerHTML = `
-      <div style="font-size: 24px; margin-bottom: 8px;">📥</div>
-      <div style="font-size: 16px; font-weight: 600; margin-bottom: 4px;">Capturing...</div>
-      <div style="font-size: 28px; font-weight: 700; color: #22c55e; margin: 8px 0;">${count}</div>
-      <div style="font-size: 13px; color: #aaa;">messages captured</div>
-      <div style="font-size: 12px; color: #666; margin-top: 12px;">Scroll and click END message</div>
+      <div style="font-size: 40px; margin-bottom: 16px; opacity: 0.9;">📥</div>
+      <div style="font-size: 15px; font-weight: 500; margin-bottom: 8px; opacity: 0.6;">Capturing Messages</div>
+      <div style="font-size: 48px; font-weight: 600; color: #25D366; margin: 16px 0; letter-spacing: -0.02em;">${count}</div>
+      <div style="font-size: 13px; color: rgba(255,255,255,0.4); margin-bottom: 20px;">messages captured</div>
+      <div style="font-size: 12px; color: rgba(255,255,255,0.3); padding: 12px 20px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+        Scroll and click the last message
+      </div>
     `;
   }
 }
@@ -405,20 +407,20 @@ function injectStyles() {
   style.id = "wa-selection-style";
   style.innerHTML = `
     .wa-select-hover { 
-      outline: 2px dashed #3b82f6 !important; 
-      background: rgba(59, 130, 246, 0.08) !important; 
+      outline: 2px solid rgba(37, 211, 102, 0.3) !important; 
+      background: rgba(37, 211, 102, 0.05) !important; 
       cursor: pointer !important;
-      transition: all 0.15s ease;
+      transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
     }
     .wa-select-start { 
-      outline: 3px solid #22c55e !important; 
-      background: rgba(34, 197, 94, 0.15) !important;
-      box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.2) !important;
+      outline: 2px solid #25D366 !important; 
+      background: rgba(37, 211, 102, 0.08) !important;
+      box-shadow: 0 0 0 4px rgba(37, 211, 102, 0.12) !important;
     }
     .wa-select-end { 
-      outline: 3px solid #ef4444 !important; 
-      background: rgba(239, 68, 68, 0.15) !important;
-      box-shadow: 0 0 0 3px rgba(239, 68, 68, 0.2) !important;
+      outline: 2px solid #25D366 !important; 
+      background: rgba(37, 211, 102, 0.08) !important;
+      box-shadow: 0 0 0 4px rgba(37, 211, 102, 0.12) !important;
     }
     .wa-hide-jump [aria-label="Scroll to bottom"], 
     .wa-hide-jump [data-testid="scroll-to-bottom-button"] { 
@@ -429,16 +431,16 @@ function injectStyles() {
       top: 50%; 
       left: 50%; 
       transform: translate(-50%, -50%); 
-      background: rgba(0, 0, 0, 0.95); 
+      background: rgba(10, 10, 10, 0.98); 
       color: white; 
       padding: 32px 40px; 
       border-radius: 16px; 
       z-index: 10000; 
       text-align: center; 
-      min-width: 280px; 
-      box-shadow: 0 20px 60px rgba(0, 0, 0, 0.6);
-      backdrop-filter: blur(10px);
-      border: 1px solid rgba(255, 255, 255, 0.1);
+      min-width: 320px; 
+      box-shadow: 0 24px 48px rgba(0, 0, 0, 0.8);
+      backdrop-filter: blur(20px);
+      border: 1px solid rgba(255, 255, 255, 0.08);
     }
   `;
   document.head.appendChild(style);
@@ -515,9 +517,11 @@ function showInstructions() {
   div.id = 'wa-capture-overlay';
   div.className = 'wa-capture-overlay';
   div.innerHTML = `
-    <div style="font-size: 48px; margin-bottom: 12px;">✅</div>
-    <div style="font-size: 18px; font-weight: 600; margin-bottom: 8px;">Start Selected</div>
-    <div style="font-size: 13px; color: #aaa;">Scroll and click the END message</div>
+    <div style="width: 56px; height: 56px; background: rgba(37, 211, 102, 0.1); border-radius: 12px; display: flex; align-items: center; justify-content: center; margin: 0 auto 20px;">
+      <span style="font-size: 32px;">✓</span>
+    </div>
+    <div style="font-size: 16px; font-weight: 500; margin-bottom: 8px;">Start Selected</div>
+    <div style="font-size: 13px; color: rgba(255,255,255,0.5);">Scroll and click the last message</div>
   `;
   document.body.appendChild(div);
 }
@@ -532,11 +536,11 @@ function showProgressOverlay(text, pct) {
   }
   
   el.innerHTML = `
-    <div style="font-size: 16px; font-weight: 600; margin-bottom: 16px;">${text}</div>
-    <div style="background: #333; height: 6px; border-radius: 3px; overflow: hidden;">
-      <div style="background: linear-gradient(90deg, #22c55e, #10b981); height: 100%; width: ${pct}%; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);"></div>
+    <div style="font-size: 15px; font-weight: 500; margin-bottom: 20px; opacity: 0.7;">${text}</div>
+    <div style="background: rgba(255,255,255,0.06); height: 4px; border-radius: 2px; overflow: hidden; margin-bottom: 12px;">
+      <div style="background: #25D366; height: 100%; width: ${pct}%; transition: width 0.4s cubic-bezier(0.4, 0, 0.2, 1);"></div>
     </div>
-    <div style="font-size: 13px; color: #888; margin-top: 10px;">${Math.round(pct)}%</div>
+    <div style="font-size: 12px; color: rgba(255,255,255,0.4);">${Math.round(pct)}%</div>
   `;
 }
 
