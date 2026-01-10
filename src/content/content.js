@@ -163,18 +163,31 @@ function extractAndSendRange(startData, endData) {
   let startIndex = findMessageIndex(allMessages, startData);
   let endIndex = findMessageIndex(allMessages, endData);
 
-  console.log("Indices - Start:", startIndex, "End:", endIndex);
+  console.log("Initial Indices - Start:", startIndex, "End:", endIndex);
 
-  // Fallback to extremes if not found
-  if (startIndex === -1) startIndex = 0;
-  if (endIndex === -1) endIndex = allMessages.length - 1;
+  // CRITICAL FIX: If we can't find exact matches, try timestamp-based ordering
+  if (startIndex === -1 || endIndex === -1) {
+    console.log("⚠️ Using fallback: timestamp-based range detection");
+    
+    // Find by timestamp comparison
+    const startTime = parseTime(startData.timestamp);
+    const endTime = parseTime(endData.timestamp);
+    
+    startIndex = allMessages.findIndex(m => parseTime(m.timestamp) >= startTime);
+    endIndex = allMessages.findIndex(m => parseTime(m.timestamp) >= endTime);
+    
+    if (startIndex === -1) startIndex = 0;
+    if (endIndex === -1) endIndex = allMessages.length - 1;
+  }
 
   // Ensure correct order
   if (startIndex > endIndex) {
     [startIndex, endIndex] = [endIndex, startIndex];
   }
 
-  // Extract range
+  console.log("Final Indices - Start:", startIndex, "End:", endIndex);
+
+  // Extract range - STRICT BOUNDARY
   let selectedMessages = allMessages.slice(startIndex, endIndex + 1);
   
   if (selectedMessages.length === 0) {
@@ -186,8 +199,8 @@ function extractAndSendRange(startData, endData) {
 
   console.log(`Final count: ${selectedMessages.length} messages`);
 
-  // Format with emojis preserved
-  const formattedOutput = formatMessages(selectedMessages);
+  // Format with TOKEN OPTIMIZATION
+  const formattedOutput = formatMessagesOptimized(selectedMessages);
 
   showProgressOverlay("Complete! ✅", 100);
 
@@ -198,6 +211,22 @@ function extractAndSendRange(startData, endData) {
     });
     disableSelectionMode();
   }, 400);
+}
+
+// Helper: Parse time for comparison (handles AM/PM)
+function parseTime(timeStr) {
+  // Format: "11:55 am" or "4:57 pm"
+  const match = timeStr.match(/(\d{1,2}):(\d{2})\s*(am|pm)/i);
+  if (!match) return 0;
+  
+  let hours = parseInt(match[1]);
+  const minutes = parseInt(match[2]);
+  const period = match[3].toLowerCase();
+  
+  if (period === 'pm' && hours !== 12) hours += 12;
+  if (period === 'am' && hours === 12) hours = 0;
+  
+  return hours * 60 + minutes;
 }
 
 function findMessageIndex(messages, targetData) {
@@ -237,34 +266,40 @@ function deduplicateMessages(messages) {
   return unique;
 }
 
-function formatMessages(messages) {
-  return messages.map((msg, i) => {
-    const prev = messages[i - 1];
+// TOKEN-OPTIMIZED FORMATTING
+function formatMessagesOptimized(messages) {
+  let output = [];
+  let lastSender = null;
+  let lastTime = null;
+  
+  messages.forEach((msg, i) => {
+    const sameSender = lastSender === msg.sender;
+    const sameMinute = lastTime === msg.timestamp;
     
-    // Build the message text
-    let formattedMsg = "";
-    
-    // Check if this is a continuation from same sender
-    const isContinuation = prev && prev.sender === msg.sender;
-    
-    if (isContinuation) {
-      // Compact format for consecutive messages
-      if (msg.replyTo) {
-        formattedMsg = `> ↪ Reply to: "${msg.replyTo}"\n> ${msg.text}`;
-      } else {
-        formattedMsg = `> ${msg.text}`;
-      }
-    } else {
-      // Full format with timestamp and sender
-      if (msg.replyTo) {
-        formattedMsg = `\n[${msg.timestamp}] ${msg.sender}:\n  ↪ Reply: "${msg.replyTo}"\n  ${msg.text}`;
-      } else {
-        formattedMsg = `\n[${msg.timestamp}] ${msg.sender}: ${msg.text}`;
-      }
+    // Format reply if exists
+    let replyPrefix = "";
+    if (msg.replyTo) {
+      // Compact reply format
+      const replyAuthor = msg.replyToSender ? `@${msg.replyToSender}` : "";
+      replyPrefix = `[Re: ${replyAuthor} "${msg.replyTo.substring(0, 40)}${msg.replyTo.length > 40 ? '...' : ''}"] `;
     }
     
-    return formattedMsg;
-  }).join("\n").trim();
+    if (sameSender && sameMinute) {
+      // Ultra-compact: just the message
+      output.push(`  ${replyPrefix}${msg.text}`);
+    } else if (sameSender) {
+      // Same sender, different time: show time only
+      output.push(`[${msg.timestamp}] ${replyPrefix}${msg.text}`);
+    } else {
+      // New sender: full format
+      output.push(`\n[${msg.timestamp}] ${msg.sender}:\n  ${replyPrefix}${msg.text}`);
+    }
+    
+    lastSender = msg.sender;
+    lastTime = msg.timestamp;
+  });
+  
+  return output.join('\n').trim();
 }
 
 // --- ENHANCED MESSAGE EXTRACTION (EMOJI SUPPORT) ---
