@@ -1,39 +1,76 @@
 import React, { useState, useEffect, useRef } from 'react';
-
-// Note: Replace with your actual Gemini API key
-const API_KEY = "YOUR_GEMINI_API_KEY_HERE";
+import { GoogleGenAI } from '@google/genai';
 
 function App() {
-  const [view, setView] = useState("home");
+  // --- STATE ---
+  const [apiKey, setApiKey] = useState("");
+  const [view, setView] = useState("loading"); // loading | setup | home | settings | selecting | preview | chat
+  
+  // App Logic State
   const [status, setStatus] = useState("");
-  const [selectedMessages, setSelectedMessages] = useState("");
-  const [summary, setSummary] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [messageCount, setMessageCount] = useState(0);
   const [error, setError] = useState("");
-  const textareaRef = useRef(null);
+  const [loading, setLoading] = useState(false);
+  const [selectedMessages, setSelectedMessages] = useState("");
+  const [messageCount, setMessageCount] = useState(0);
+  const [chatHistory, setChatHistory] = useState([]); 
+  const [inputMessage, setInputMessage] = useState("");
+  
+  const chatEndRef = useRef(null);
 
+  // --- INITIALIZATION ---
+  useEffect(() => {
+    const storedKey = localStorage.getItem("wa_gemini_key");
+    const savedMsg = localStorage.getItem("wa_context");
+    const savedChat = localStorage.getItem("wa_chat");
+
+    if (storedKey) {
+      setApiKey(storedKey);
+      if (savedMsg) {
+        setSelectedMessages(savedMsg);
+        setMessageCount(savedMsg.split('\n').filter(l => l.includes('[') && l.includes(']')).length);
+        if (savedChat) {
+          try {
+            setChatHistory(JSON.parse(savedChat));
+            setView("chat");
+          } catch (e) { setView("home"); }
+        } else {
+          setView("home");
+        }
+      } else {
+        setView("home");
+      }
+    } else {
+      setView("setup");
+    }
+  }, []);
+
+  // --- PERSISTENCE ---
+  useEffect(() => {
+    if (apiKey) localStorage.setItem("wa_gemini_key", apiKey);
+    if (selectedMessages) localStorage.setItem("wa_context", selectedMessages);
+    if (chatHistory.length > 0) localStorage.setItem("wa_chat", JSON.stringify(chatHistory));
+  }, [apiKey, selectedMessages, chatHistory]);
+
+  useEffect(() => {
+    chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
+  }, [chatHistory, loading]);
+
+  // --- CHROME LISTENER ---
   useEffect(() => {
     const handleMessage = (request) => {
       if (request.action === "STATUS_UPDATE") {
         setStatus(request.text);
         setError("");
-      }
-      else if (request.action === "SELECTION_COMPLETE") {
+      } else if (request.action === "SELECTION_COMPLETE") {
         const data = request.data;
-        
         if (data.startsWith("Error:")) {
           setError(data);
-          setStatus("");
           setView("home");
-          setTimeout(() => setError(""), 5000);
         } else {
           setSelectedMessages(data);
-          const lines = data.split('\n').filter(l => l.includes('[') && l.includes(']'));
-          setMessageCount(lines.length);
+          setMessageCount(data.split('\n').filter(l => l.includes('[') && l.includes(']')).length);
           setStatus("✅ Capture complete!");
           setView("preview");
-          setError("");
         }
       }
     };
@@ -44,23 +81,35 @@ function App() {
     }
   }, []);
 
+  // --- ACTIONS ---
+  
+  const handleSaveKey = (key) => {
+    if (!key.trim().startsWith("AIza")) {
+      setError("Invalid Key. It usually starts with 'AIza'.");
+      return;
+    }
+    setApiKey(key.trim());
+    localStorage.setItem("wa_gemini_key", key.trim());
+    setView("home");
+    setError("");
+  };
+
+  const handleRemoveKey = () => {
+    localStorage.removeItem("wa_gemini_key");
+    setApiKey("");
+    resetAll();
+    setView("setup");
+  };
+
   const startSelection = async () => {
     try {
       setView("selecting");
       setStatus("🎯 Click the FIRST message");
-      setError("");
-      
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
-      
-      if (!tab.url.includes("web.whatsapp.com")) {
-        setError("⚠️ Please open WhatsApp Web first");
-        setView("home");
-        return;
-      }
-      
+      if (!tab.url.includes("web.whatsapp.com")) throw new Error("Open WhatsApp Web first");
       await chrome.tabs.sendMessage(tab.id, { action: "ENABLE_SELECTION_MODE" });
     } catch (err) {
-      setError("❌ Failed to start: " + err.message);
+      setError("❌ " + err.message);
       setView("home");
     }
   };
@@ -69,343 +118,334 @@ function App() {
     try {
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       await chrome.tabs.sendMessage(tab.id, { action: "RESET_SELECTION" });
-    } catch (err) {
-      console.error("Cancel error:", err);
-    }
+    } catch (e) {}
     setView("home");
     setStatus("");
-    setError("");
   };
 
-  const handleSummarize = async () => {
-    if (!API_KEY || API_KEY === "YOUR_GEMINI_API_KEY_HERE") {
-      setError("⚠️ Please add your Gemini API key in App.jsx");
-      return;
-    }
-
-    setLoading(true);
+  const resetAll = () => {
+    setSelectedMessages("");
+    setChatHistory([]);
+    setMessageCount(0);
+    setStatus("");
     setError("");
+    localStorage.removeItem("wa_context");
+    localStorage.removeItem("wa_chat");
+    if (apiKey) setView("home");
+  };
+
+  const clearChatOnly = () => {
+    setChatHistory([]);
+    localStorage.removeItem("wa_chat");
+  };
+
+  const goBack = () => {
+    if (view === "chat") setView("preview");
+    else if (view === "preview") setView("home");
+    else if (view === "settings") setView("home");
+  };
+
+  // --- AI ENGINE (FIXED) ---
+
+  const handleSendMessage = async () => {
+    if (!inputMessage.trim()) return;
+    const userQ = inputMessage;
+    setInputMessage(""); 
+    await generateAIResponse(userQ);
+  };
+
+  const generateAIResponse = async (query) => {
+    if (!apiKey) { setError("⚠️ Missing API Key"); return; }
     
+    const newHistory = [...chatHistory, { role: "user", text: query }];
+    setChatHistory(newHistory);
+    setLoading(true);
+
     try {
-      const response = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${API_KEY}`,
-        {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{
-              parts: [{
-                text: `Analyze this WhatsApp conversation and provide a concise summary:
-
-**Format your response as:**
-
-📌 **Main Topics**
-[List 2-3 key discussion topics]
-
-✅ **Key Decisions**
-[Any decisions or agreements made]
-
-📋 **Action Items**
-[Tasks or commitments, with assignee if mentioned]
-
-💡 **Important Info**
-[Critical dates, numbers, or information]
-
-Keep it brief and organized. Use emojis where appropriate.
-
-**Conversation:**
-${selectedMessages}`
-              }]
-            }],
-            generationConfig: {
-              temperature: 0.7,
-              maxOutputTokens: 1000,
-            }
-          })
-        }
-      );
-
-      const data = await response.json();
+      const ai = new GoogleGenAI({ apiKey });
       
-      if (data.error) {
-        throw new Error(data.error.message || "API Error");
+      const conversationHistory = chatHistory.slice(-8).map(msg => ({
+        role: msg.role === 'user' ? 'user' : 'model',
+        parts: [{ text: msg.text }]
+      }));
+
+      const systemInstruction = `
+You are "Whatsapp group chat summerizer", an expert WhatsApp Conversation Analyst.
+CONTEXT:
+"""
+${selectedMessages}
+"""
+Guidelines: 
+1. Be Concise. Use bullet points for lists.
+2. Use **Bold** for important names or keys.
+3. Be Friendly . Use Emojis.
+`;
+
+      const response = await ai.models.generateContentStream({
+        model: 'gemini-flash-lite-latest', 
+        config: {
+           systemInstruction: { parts: [{ text: systemInstruction }] },
+           generationConfig: { maxOutputTokens: 1000 }
+        },
+        contents: [
+            ...conversationHistory, 
+            { role: 'user', parts: [{ text: query }] }
+        ],
+      });
+
+      let fullResponse = "";
+      setChatHistory(prev => [...prev, { role: "model", text: "..." }]);
+
+      for await (const chunk of response) {
+        // --- FIX IS HERE: chunk.text is a PROPERTY, not a function ---
+        const chunkText = chunk.text || ""; 
+        fullResponse += chunkText;
+        
+        setChatHistory(prev => {
+           const newArr = [...prev];
+           newArr[newArr.length - 1] = { role: "model", text: fullResponse };
+           return newArr;
+        });
       }
 
-      const text = data.candidates?.[0]?.content?.parts?.[0]?.text || "No summary generated";
-      setSummary(text);
-      setView("summary");
-    } catch (error) {
-      console.error("Summary error:", error);
-      setError("❌ " + error.message);
-      setSummary("Failed to generate summary. Please check your API key and try again.");
-      setView("summary");
+    } catch (err) {
+      console.error(err);
+      setError("❌ AI Error: " + (err.message || "Connection failed"));
+      setChatHistory(prev => prev.slice(0, -1)); 
     } finally {
       setLoading(false);
     }
   };
 
-  const copyToClipboard = (text) => {
-    navigator.clipboard.writeText(text);
-    setStatus("✅ Copied!");
-    setTimeout(() => setStatus(""), 2000);
+  // --- COMPONENTS ---
+
+  // Custom Markdown Renderer
+  const MarkdownRenderer = ({ text }) => {
+    if (!text) return null;
+    const lines = text.split('\n');
+    return (
+      <div className="space-y-1">
+        {lines.map((line, i) => {
+          // Bullet Points
+          if (line.trim().startsWith('* ') || line.trim().startsWith('- ')) {
+             const content = line.trim().substring(2);
+             return (
+               <div key={i} className="flex gap-2 items-start ml-1">
+                 <span className="text-[#25D366] mt-1.5 text-[6px]">●</span>
+                 <span className="flex-1" dangerouslySetInnerHTML={{ __html: formatBold(content) }} />
+               </div>
+             );
+          }
+          // Headers
+          if (line.trim().startsWith('## ')) {
+             return <h3 key={i} className="text-[#25D366] font-bold mt-2 mb-1" dangerouslySetInnerHTML={{ __html: formatBold(line.substring(3)) }} />;
+          }
+          // Standard Text
+          return <p key={i} className="min-h-[1em]" dangerouslySetInnerHTML={{ __html: formatBold(line) }} />;
+        })}
+      </div>
+    );
   };
 
-  const resetAll = () => {
-    setView("home");
-    setSelectedMessages("");
-    setSummary("");
-    setMessageCount(0);
-    setStatus("");
-    setError("");
+  const formatBold = (text) => {
+    return text.replace(/\*\*(.*?)\*\*/g, '<strong class="text-white font-semibold">$1</strong>');
   };
 
+  const handleKeyDown = (e) => {
+    if (e.key === 'Enter' && !e.shiftKey) {
+      e.preventDefault();
+      handleSendMessage();
+    }
+  };
+
+  // --- VIEWS ---
+
+  if (view === "loading") return <div className="h-screen bg-[#0A0A0A] flex items-center justify-center text-white/20">Loading...</div>;
+
+  // SETUP VIEW
+  if (view === "setup") {
+    return (
+      <div className="h-screen w-full bg-[#0A0A0A] text-white flex flex-col items-center justify-center p-8 text-center animate-fade-in">
+        <div className="w-16 h-16 bg-[#25D366] rounded-2xl flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(37,211,102,0.4)]">
+          <svg width="32" height="32" viewBox="0 0 24 24" fill="white"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM11 7H13V9H11V7ZM11 11H13V17H11V11Z"/></svg>
+        </div>
+        <h1 className="text-2xl font-bold mb-2">Welcome to WA Insights</h1>
+        <p className="text-white/50 text-[13px] mb-8 max-w-xs">Enter your Gemini API Key to start.</p>
+        <div className="w-full max-w-xs space-y-4">
+          <input 
+            type="password" 
+            placeholder="Paste Key (AIza...)" 
+            className="w-full bg-[#1A1A1A] border border-white/[0.1] rounded-xl px-4 py-3 text-[13px] text-white focus:outline-none focus:border-[#25D366]"
+            onChange={(e) => setApiKey(e.target.value)} 
+          />
+          <button onClick={() => handleSaveKey(apiKey)} className="w-full bg-[#25D366] hover:bg-[#20BD5A] text-black font-semibold py-3 rounded-xl text-[14px]">Save & Continue</button>
+          <a href="https://aistudio.google.com/app/apikey" target="_blank" className="block text-[12px] text-white/30 hover:text-white/60 underline">Get free API Key ↗</a>
+        </div>
+      </div>
+    );
+  }
+
+  // SETTINGS VIEW
+  if (view === "settings") {
+    return (
+      <div className="h-screen w-full bg-[#0A0A0A] text-white flex flex-col p-6 animate-fade-in">
+        <div className="flex items-center gap-4 mb-8">
+          <button onClick={goBack} className="w-8 h-8 bg-white/[0.05] rounded-full flex items-center justify-center hover:bg-white/[0.1]">←</button>
+          <h2 className="text-lg font-semibold">Settings</h2>
+        </div>
+        <div className="bg-white/[0.03] border border-white/[0.08] rounded-xl p-5 space-y-4">
+          <div>
+            <label className="text-[12px] font-medium text-white/60 mb-1 block">API Key</label>
+            <input type="password" value={apiKey} readOnly className="w-full bg-black/40 border border-white/[0.1] rounded-lg px-3 py-2 text-[13px] text-white/50 font-mono" />
+          </div>
+          <button onClick={handleRemoveKey} className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 py-2.5 rounded-lg text-[13px]">Remove Key</button>
+        </div>
+      </div>
+    );
+  }
+
+  // MAIN UI
   return (
-    <div className="h-screen w-full bg-[#0A0A0A] text-white flex flex-col font-sans antialiased">
-      {/* Header */}
-      <header className="flex-shrink-0 border-b border-white/[0.08]">
-        <div className="px-6 py-4 flex items-center justify-between">
+    <div className="h-screen w-full bg-[#0A0A0A] text-white flex flex-col font-sans antialiased overflow-hidden">
+      
+      {/* HEADER */}
+      <header className="flex-shrink-0 border-b border-white/[0.08] bg-[#0A0A0A] z-10">
+        <div className="px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-8 h-8 bg-[#25D366] rounded-lg flex items-center justify-center">
-              <svg width="18" height="18" viewBox="0 0 24 24" fill="none">
-                <path d="M12 2C6.48 2 2 6.48 2 12C2 13.89 2.53 15.64 3.44 17.13L2 22L7.05 20.6C8.48 21.41 10.19 21.88 12 21.88C17.52 21.88 22 17.4 22 11.88C22 6.36 17.52 2 12 2Z" fill="white"/>
-              </svg>
-            </div>
+            {view !== "home" && view !== "selecting" ? (
+               <button onClick={goBack} className="w-8 h-8 -ml-2 rounded-full hover:bg-white/[0.05] flex items-center justify-center text-white/80 transition-colors">
+                 <span className="text-xl pb-1">←</span>
+               </button>
+            ) : (
+               <div className="w-8 h-8 bg-[#25D366] rounded-lg flex items-center justify-center shadow-[0_0_15px_rgba(37,211,102,0.3)]">
+                 <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
+               </div>
+            )}
             <div>
-              <h1 className="font-semibold text-base tracking-tight">Summarizer</h1>
-              <p className="text-[11px] text-white/40 -mt-0.5">WhatsApp Insights</p>
+              <h1 className="font-semibold text-sm tracking-wide">WA Insights</h1>
+              {messageCount > 0 && <p className="text-[10px] text-white/40">{messageCount} msgs</p>}
             </div>
           </div>
-          {view !== "home" && (
-            <button
-              onClick={resetAll}
-              className="text-[13px] text-white/50 hover:text-white transition-colors px-3 py-1.5 rounded-md hover:bg-white/[0.05]"
-            >
-              Home
-            </button>
-          )}
+          <div className="flex gap-2 items-center">
+             {view !== "home" && (
+              <button onClick={resetAll} className="text-[11px] bg-white/[0.05] hover:bg-white/[0.1] px-3 py-1.5 rounded-md transition-colors">
+                New Chat
+              </button>
+            )}
+            <button onClick={() => setView("settings")} className="w-8 h-8 rounded-full hover:bg-white/[0.05] flex items-center justify-center text-white/60 hover:text-white transition-colors">⚙️</button>
+          </div>
         </div>
       </header>
 
-      {/* Error Banner */}
+      {/* ERROR BANNER */}
       {error && (
-        <div className="flex-shrink-0 bg-red-500/10 border-b border-red-500/20 px-6 py-3">
-          <div className="flex items-start gap-2.5">
-            <span className="text-red-400 text-sm mt-0.5">⚠</span>
-            <p className="text-[13px] text-red-300 leading-relaxed">{error}</p>
-          </div>
+        <div className="bg-red-500/10 border-b border-red-500/20 px-4 py-2 flex justify-between items-center">
+          <span className="text-[12px] text-red-300">{error}</span>
+          <button onClick={() => setError("")} className="text-red-300">×</button>
         </div>
       )}
 
-      {/* Main Content */}
-      <main className="flex-1 overflow-y-auto">
-        {/* VIEW 1: HOME */}
+      {/* MAIN CONTENT */}
+      <main className="flex-1 overflow-y-auto relative scroll-smooth">
+        
         {view === "home" && (
-          <div className="h-full flex items-center justify-center p-6">
-            <div className="w-full max-w-sm space-y-6">
-              {/* Hero Card */}
-              <div className="text-center space-y-4 pb-8">
-                <div className="inline-flex items-center justify-center w-20 h-20 bg-white/[0.03] rounded-2xl border border-white/[0.08] mb-2">
-                  <span className="text-4xl">💬</span>
-                </div>
-                <div>
-                  <h2 className="text-2xl font-semibold tracking-tight mb-2">
-                    Capture Conversations
-                  </h2>
-                  <p className="text-[15px] text-white/50 leading-relaxed max-w-xs mx-auto">
-                    Select any message range and extract AI-powered insights
-                  </p>
-                </div>
-              </div>
-
-              {/* Primary Action */}
-              <button
-                onClick={startSelection}
-                className="w-full bg-[#25D366] hover:bg-[#20BD5A] text-white font-medium py-4 px-6 rounded-xl transition-colors text-[15px] shadow-lg shadow-[#25D366]/20"
-              >
-                Start Selection
-              </button>
-
-              {/* Instructions */}
-              <div className="bg-white/[0.02] border border-white/[0.08] rounded-xl p-5 space-y-4">
-                <h3 className="text-[13px] font-medium text-white/60 uppercase tracking-wider">
-                  How it Works
-                </h3>
-                <div className="space-y-3.5">
-                  {[
-                    "Click 'Start Selection' button",
-                    "Click the first message you want",
-                    "Scroll and click the last message",
-                    "Get your AI summary instantly"
-                  ].map((text, i) => (
-                    <div key={i} className="flex gap-3.5 items-start">
-                      <div className="flex-shrink-0 w-5 h-5 rounded-full bg-white/[0.06] flex items-center justify-center mt-0.5">
-                        <span className="text-[11px] font-medium text-white/70">{i + 1}</span>
-                      </div>
-                      <span className="text-[14px] text-white/70 leading-relaxed pt-px">{text}</span>
-                    </div>
-                  ))}
-                </div>
-              </div>
-
-              {/* Info Card */}
-              <div className="bg-white/[0.02] border border-white/[0.08] rounded-xl p-4">
-                <div className="flex gap-3">
-                  <span className="text-lg flex-shrink-0">⚡</span>
-                  <div className="space-y-1">
-                    <p className="text-[13px] font-medium text-white/90">
-                      Real-time Capture
-                    </p>
-                    <p className="text-[13px] text-white/50 leading-relaxed">
-                      Messages are captured as you scroll, perfect for long conversations
-                    </p>
-                  </div>
-                </div>
-              </div>
+          <div className="h-full flex flex-col items-center justify-center p-8 text-center space-y-6 animate-fade-in">
+            <div className="w-20 h-20 bg-white/[0.03] rounded-2xl border border-white/[0.08] flex items-center justify-center mb-2">
+              <span className="text-4xl">✨</span>
             </div>
+            <div>
+              <h2 className="text-xl font-semibold mb-2">Ready to Analyze</h2>
+              <p className="text-[13px] text-white/40 max-w-[260px] mx-auto leading-relaxed">
+                Open a chat, select messages, and uncover insights with your personal AI.
+              </p>
+            </div>
+            <button onClick={startSelection} className="w-full max-w-xs bg-[#25D366] hover:bg-[#20BD5A] text-black font-semibold py-3.5 rounded-xl transition-all shadow-[0_4px_20px_rgba(37,211,102,0.2)] hover:shadow-[0_4px_25px_rgba(37,211,102,0.3)] active:scale-95 text-[14px]">
+              Select Messages
+            </button>
+            {localStorage.getItem("wa_context") && (
+              <button onClick={() => setView("chat")} className="text-[12px] text-white/40 hover:text-white transition-colors underline decoration-white/20 underline-offset-4">
+                Resume previous session
+              </button>
+            )}
           </div>
         )}
 
-        {/* VIEW 2: SELECTING */}
         {view === "selecting" && (
-          <div className="h-full flex items-center justify-center p-6">
-            <div className="text-center space-y-8 max-w-xs">
-              <div className="inline-flex items-center justify-center w-24 h-24 bg-white/[0.03] rounded-2xl border border-white/[0.08]">
-                <span className="text-5xl animate-bounce">👆</span>
-              </div>
+          <div className="h-full flex flex-col items-center justify-center p-6 text-center animate-pulse">
+            <span className="text-5xl mb-6">👆</span>
+            <h3 className="text-lg font-medium text-[#25D366] mb-2">Selection Mode Active</h3>
+            <p className="text-[13px] text-white/50 mb-8 max-w-xs">{status}</p>
+            <button onClick={cancelSelection} className="text-[12px] bg-white/[0.05] px-4 py-2 rounded-lg text-white/60 hover:bg-white/[0.1]">Cancel</button>
+          </div>
+        )}
 
-              <div className="space-y-3">
-                <h3 className="text-xl font-semibold">Selection Active</h3>
-                <div className="bg-[#25D366]/10 border border-[#25D366]/20 px-6 py-3.5 rounded-xl">
-                  <p className="text-[14px] text-[#25D366]">{status}</p>
+        {view === "preview" && (
+          <div className="h-full flex flex-col p-6 animate-fade-in">
+            <h2 className="text-lg font-semibold mb-4">Preview Capture</h2>
+            <textarea 
+              readOnly 
+              value={selectedMessages} 
+              className="flex-1 bg-black/40 border border-white/[0.08] rounded-xl p-4 text-[12px] font-mono text-white/70 resize-none focus:outline-none mb-4"
+            />
+            <div className="flex gap-3">
+              <button onClick={resetAll} className="flex-1 py-3 rounded-xl border border-white/[0.1] text-[13px] hover:bg-white/[0.05]">Discard</button>
+              <button 
+                onClick={() => {
+                   setView("chat");
+                   if(chatHistory.length === 0) generateAIResponse("Summarize this conversation in 3 bullet points.");
+                }} 
+                className="flex-[2] bg-[#25D366] text-black font-semibold py-3 rounded-xl text-[13px] hover:bg-[#20BD5A]"
+              >
+                Start Analysis
+              </button>
+            </div>
+          </div>
+        )}
+
+        {view === "chat" && (
+          <div className="min-h-full flex flex-col justify-end p-4 gap-4 pb-4">
+            {chatHistory.length === 0 && (
+               <div className="flex-1 flex flex-col items-center justify-center text-white/30 space-y-4">
+                <span className="text-3xl opacity-50">🤖</span>
+                <p className="text-[13px]">Ask me anything about the chat!</p>
+              </div>
+            )}
+            {chatHistory.map((msg, idx) => (
+              <div key={idx} className={`flex ${msg.role === 'user' ? 'justify-end' : 'justify-start'} animate-fade-in-up`}>
+                <div className={`max-w-[90%] rounded-2xl px-4 py-3 text-[13px] leading-relaxed shadow-sm ${msg.role === 'user' ? 'bg-[#25D366] text-black font-medium rounded-tr-none' : 'bg-[#1F1F1F] text-white/90 border border-white/[0.05] rounded-tl-none'}`}>
+                  {msg.role === 'model' ? (
+                     <MarkdownRenderer text={msg.text} />
+                  ) : (
+                     <div className="whitespace-pre-wrap font-sans">{msg.text}</div>
+                  )}
                 </div>
               </div>
-
-              <div className="bg-white/[0.02] border border-white/[0.08] rounded-xl p-4">
-                <p className="text-[13px] text-white/60 leading-relaxed">
-                  <span className="text-white/90 font-medium">Tip:</span> A live counter will show captured messages as you scroll
-                </p>
-              </div>
-
-              <button
-                onClick={cancelSelection}
-                className="text-[13px] text-white/50 hover:text-white transition-colors"
-              >
-                Cancel
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* VIEW 3: PREVIEW */}
-        {view === "preview" && (
-          <div className="h-full flex flex-col p-6 max-w-4xl mx-auto">
-            {/* Header */}
-            <div className="flex-shrink-0 mb-4 flex justify-between items-start">
-              <div>
-                <h2 className="text-lg font-semibold mb-1">Review Messages</h2>
-                <p className="text-[13px] text-white/50">
-                  {messageCount} messages captured
-                </p>
-              </div>
-              <button
-                onClick={() => copyToClipboard(selectedMessages)}
-                className="text-[13px] bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] px-4 py-2 rounded-lg transition-colors"
-              >
-                Copy
-              </button>
-            </div>
-
-            {/* Messages */}
-            <div className="flex-1 min-h-0 mb-4">
-              <textarea
-                ref={textareaRef}
-                value={selectedMessages}
-                readOnly
-                className="w-full h-full bg-black/40 border border-white/[0.08] text-[13px] leading-[1.6] font-mono p-4 rounded-xl text-white/90 resize-none focus:outline-none focus:border-white/20 transition-colors"
-                style={{ 
-                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-                  whiteSpace: 'pre-wrap',
-                  wordBreak: 'break-word'
-                }}
-                placeholder="Messages will appear here..."
-              />
-            </div>
-
-            {/* Actions */}
-            <div className="flex-shrink-0 flex gap-3">
-              <button
-                onClick={resetAll}
-                className="flex-1 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] py-3.5 rounded-xl text-[14px] font-medium transition-colors"
-              >
-                Cancel
-              </button>
-              <button
-                onClick={handleSummarize}
-                disabled={loading}
-                className="flex-[2] bg-[#25D366] hover:bg-[#20BD5A] disabled:bg-white/[0.05] disabled:text-white/30 text-white font-medium py-3.5 rounded-xl transition-colors text-[14px] disabled:cursor-not-allowed"
-              >
-                {loading ? (
-                  <span className="flex items-center justify-center gap-2">
-                    <span className="inline-block w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                    Analyzing...
-                  </span>
-                ) : (
-                  "Generate Summary"
-                )}
-              </button>
-            </div>
-          </div>
-        )}
-
-        {/* VIEW 4: SUMMARY */}
-        {view === "summary" && (
-          <div className="h-full flex flex-col p-6 max-w-4xl mx-auto">
-            {/* Header */}
-            <div className="flex-shrink-0 mb-4 flex justify-between items-start">
-              <div>
-                <h2 className="text-lg font-semibold mb-1">Summary</h2>
-                <p className="text-[13px] text-white/50">AI-generated insights</p>
-              </div>
-              <button
-                onClick={() => copyToClipboard(summary)}
-                className="text-[13px] bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] px-4 py-2 rounded-lg transition-colors"
-              >
-                Copy
-              </button>
-            </div>
-
-            {/* Summary Content */}
-            <div className="flex-1 min-h-0 overflow-y-auto bg-white/[0.02] border border-white/[0.08] rounded-xl p-6 mb-4">
-              <div className="prose prose-invert prose-sm max-w-none">
-                <pre className="whitespace-pre-wrap font-sans text-[14px] leading-[1.7] text-white/80">
-                  {summary}
-                </pre>
-              </div>
-            </div>
-
-            {/* Actions */}
-            <div className="flex-shrink-0 flex gap-3">
-              <button
-                onClick={() => setView("preview")}
-                className="flex-1 bg-white/[0.05] hover:bg-white/[0.08] border border-white/[0.08] py-3.5 rounded-xl text-[14px] font-medium transition-colors"
-              >
-                ← Messages
-              </button>
-              <button
-                onClick={resetAll}
-                className="flex-1 bg-[#25D366] hover:bg-[#20BD5A] text-white font-medium py-3.5 rounded-xl transition-colors text-[14px]"
-              >
-                New Summary
-              </button>
-            </div>
+            ))}
+            <div ref={chatEndRef} />
           </div>
         )}
       </main>
 
-      {/* Status Toast */}
-      {status && view !== "selecting" && (
-        <div className="fixed bottom-6 right-6 bg-[#1A1A1A] border border-white/[0.12] px-5 py-3 rounded-xl shadow-2xl text-[13px] animate-fade-in backdrop-blur-xl">
-          {status}
+      {/* INPUT AREA */}
+      {view === "chat" && (
+        <div className="flex-shrink-0 p-4 bg-[#0A0A0A] border-t border-white/[0.08]">
+          <div className="relative flex items-end gap-2 bg-[#1A1A1A] border border-white/[0.1] rounded-xl p-1.5 focus-within:border-white/[0.2]">
+            <textarea
+              value={inputMessage}
+              onChange={(e) => setInputMessage(e.target.value)}
+              onKeyDown={handleKeyDown}
+              placeholder="Ask a follow-up..."
+              className="w-full bg-transparent text-[13px] text-white placeholder-white/30 px-3 py-2.5 max-h-24 min-h-[44px] resize-none focus:outline-none scrollbar-hide"
+              rows={1}
+            />
+            <button
+              onClick={handleSendMessage}
+              disabled={loading || !inputMessage.trim()}
+              className="flex-shrink-0 w-8 h-8 bg-[#25D366] disabled:bg-white/[0.1] disabled:text-white/20 text-black rounded-lg flex items-center justify-center transition-all hover:scale-105 active:scale-95 mb-0.5"
+            >
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="currentColor"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg>
+            </button>
+          </div>
         </div>
       )}
     </div>

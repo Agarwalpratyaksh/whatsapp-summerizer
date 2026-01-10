@@ -267,42 +267,41 @@ function deduplicateMessages(messages) {
 }
 
 // TOKEN-OPTIMIZED FORMATTING
+
 function formatMessagesOptimized(messages) {
   let output = [];
   let lastSender = null;
-  let lastTime = null;
   
-  messages.forEach((msg, i) => {
-    const sameSender = lastSender === msg.sender;
-    const sameMinute = lastTime === msg.timestamp;
-    
-    // Format reply if exists
-    let replyPrefix = "";
-    if (msg.replyTo) {
-      // Compact reply format
-      const replyAuthor = msg.replyToSender ? `@${msg.replyToSender}` : "";
-      replyPrefix = `[Re: ${replyAuthor} "${msg.replyTo.substring(0, 40)}${msg.replyTo.length > 40 ? '...' : ''}"] `;
-    }
-    
-    if (sameSender && sameMinute) {
-      // Ultra-compact: just the message
-      output.push(`  ${replyPrefix}${msg.text}`);
-    } else if (sameSender) {
-      // Same sender, different time: show time only
-      output.push(`[${msg.timestamp}] ${replyPrefix}${msg.text}`);
+  messages.forEach((msg) => {
+    // Clean up text
+    let content = msg.text.trim();
+    if (!content) return;
+
+    // Logic: New Sender vs Same Sender
+    if (lastSender === msg.sender) {
+      // If it's a continuation, check if it has a reply context
+      if (content.startsWith("[Replying to:")) {
+         output.push(`\n   ${content}`); // Indent replies slightly
+      } else {
+         output.push(`>> ${content}`);
+      }
     } else {
-      // New sender: full format
-      output.push(`\n[${msg.timestamp}] ${msg.sender}:\n  ${replyPrefix}${msg.text}`);
+      // New Speaker
+      const prefix = lastSender ? "\n" : ""; 
+      output.push(`${prefix}${msg.sender} [${msg.timestamp}]:\n   ${content}`);
     }
     
     lastSender = msg.sender;
-    lastTime = msg.timestamp;
   });
   
-  return output.join('\n').trim();
+  return output.join('\n');
 }
 
-// --- ENHANCED MESSAGE EXTRACTION (EMOJI SUPPORT) ---
+
+// --- ROBUST DATA EXTRACTION (FIXED EMOJIS) ---
+
+
+// --- FIXED EXTRACTION LOGIC (SEPARATES REPLIES) ---
 
 function extractMessageData(row) {
   try {
@@ -314,29 +313,47 @@ function extractMessageData(row) {
     let sender = "System";
     let timestamp = timeEl ? timeEl.innerText.trim() : "";
     let type = "system";
+    let replyContext = "";
 
     if (copyable) {
-      // Extract sender and timestamp from data attribute
+      // 1. Metadata
       const dateStr = copyable.getAttribute("data-pre-plain-text") || "";
       const match = dateStr.match(/\[(.*?)\]\s*(.*?):/);
-      
       if (match) {
         timestamp = match[1].trim();
         sender = match[2].trim();
       }
 
-      // CRITICAL: Extract text WITH emojis preserved
-      const textSpan = copyable.querySelector('span.selectable-text');
-      if (textSpan) {
-        // Get ALL child nodes including text and emoji images
-        text = extractTextWithEmojis(textSpan);
-      } else {
-        text = copyable.innerText.trim();
+      // 2. Reply Detection
+      const quoteContainer = row.querySelector('div[aria-label="Quoted message"]');
+      if (quoteContainer) {
+        const rawQuote = quoteContainer.innerText.replace(/\n/g, ' ').substring(0, 40);
+        replyContext = `[Replying to: "${rawQuote}..."] `;
       }
-      
+
+      // 3. Extraction
+      const realMessageNode = copyable.querySelector('span.selectable-text');
+      if (realMessageNode) {
+        text = extractTextWithEmojis(realMessageNode);
+      } else {
+        // Fallback: Clone and clean
+        const clone = copyable.cloneNode(true);
+        const quoteInClone = clone.querySelector('div[aria-label="Quoted message"]');
+        if (quoteInClone) quoteInClone.remove();
+        text = extractTextWithEmojis(clone);
+      }
+
+      // 4. CLEANUP (The Fix for "11:55 am") 🧹
+      // If the text ends with the timestamp, slice it off
+      if (timestamp && text.trim().endsWith(timestamp)) {
+         text = text.trim().slice(0, -timestamp.length).trim();
+      }
+      // Regex backup: Remove trailing time pattern "12:00 pm" if it appears at the very end
+      text = text.replace(/\d{1,2}:\d{2}\s?[ap]m$/i, '').trim();
+
       type = "text";
     } else {
-      // Handle system messages, media, stickers
+      // System/Media logic...
       const img = row.querySelector("img");
       if (img && img.src && img.src.includes("sticker")) {
         text = "[Sticker]";
@@ -353,44 +370,75 @@ function extractMessageData(row) {
       }
     }
 
-    // Create unique ID
-    const dataId = row.getAttribute("data-id");
-    const textHash = hashText(text.substring(0, 20));
-    const uniqueId = dataId || `msg_${timestamp}_${sender}_${textHash}`;
+    const uniqueId = row.getAttribute("data-id") || `${timestamp}_${sender}_${text.substring(0,15)}`;
+    const finalText = replyContext ? `${replyContext}\n${text}` : text;
 
     return {
       id: uniqueId,
       timestamp,
       sender,
-      text,
+      text: finalText,
+      rawText: text,
       preview: `${sender}: ${text.substring(0, 30)}...`,
       type,
     };
   } catch (error) {
-    console.error("Error extracting message:", error);
+    console.error("Extraction Error:", error);
     return null;
   }
 }
 
+// THE EMOJI FIXER FUNCTION
+function getDeepText(element) {
+  // 1. Clone the node so we don't destroy the actual WhatsApp UI
+  const clone = element.cloneNode(true);
+  
+  // 2. Find all WhatsApp emoji images
+  // WhatsApp uses images with class 'b87' or similar, but 'img' is safer
+  const images = clone.querySelectorAll('img');
+  
+  images.forEach(img => {
+    // WhatsApp puts the emoji char in 'alt' or 'data-plain-text'
+    const emojiChar = img.alt || img.getAttribute('data-plain-text') || "";
+    
+    // Replace the <img> tag with a text node containing the emoji
+    if (emojiChar) {
+      const textNode = document.createTextNode(emojiChar);
+      img.parentNode.replaceChild(textNode, img);
+    }
+  });
+
+  // 3. Return the clean text
+  return clone.innerText || clone.textContent;
+}
 // EMOJI EXTRACTION: Get text with emojis from WhatsApp's DOM
+// HELPER: Extract text + emojis but IGNORE time and metadata
 function extractTextWithEmojis(element) {
   let text = "";
   
-  // Traverse all child nodes
   const traverse = (node) => {
+    // 1. IGNORE Time & Metadata Nodes
+    if (node.nodeType === Node.ELEMENT_NODE) {
+      const isTime = node.getAttribute('data-testid') === 'msg-time' || 
+                     node.classList.contains('_amig') ||
+                     node.innerText.match(/\d{1,2}:\d{2}\s?[ap]m/i); // Safety check
+                     
+      // If this specific node is the time, SKIP it
+      // (But be careful not to skip the whole message if the message contains a time string)
+      // Best check: does it have data-pre-plain-text? No, that's the parent.
+      // Check strict classes or if it's a known time container.
+      if (node.getAttribute('data-testid') === 'msg-time') return;
+    }
+
     if (node.nodeType === Node.TEXT_NODE) {
-      // Regular text
       text += node.textContent;
     } else if (node.nodeType === Node.ELEMENT_NODE) {
-      // Check for emoji image (WhatsApp uses img tags for emojis)
       if (node.tagName === 'IMG') {
-        // Try multiple attributes where emoji might be stored
         const emoji = node.getAttribute('alt') || 
                      node.getAttribute('data-plain-text') ||
                      node.getAttribute('aria-label') || '';
         text += emoji;
       } else {
-        // Recurse into child nodes
         node.childNodes.forEach(child => traverse(child));
       }
     }
@@ -399,7 +447,6 @@ function extractTextWithEmojis(element) {
   traverse(element);
   return text;
 }
-
 function hashText(text) {
   // Simple hash for unique ID generation
   let hash = 0;

@@ -1,0 +1,3 @@
+Guidelines:Summrize the messages, mention the important things, Concise, Friendly. Use Emojis.
+
+ model: 'gemini-flash-lite-latest', 
