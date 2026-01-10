@@ -321,7 +321,12 @@ ${selectedMessages}`
                 ref={textareaRef}
                 value={selectedMessages}
                 readOnly
-                className="w-full h-full bg-black/40 border border-white/[0.08] text-[13px] font-mono p-4 rounded-xl text-[#25D366] resize-none focus:outline-none focus:border-white/20 transition-colors"
+                className="w-full h-full bg-black/40 border border-white/[0.08] text-[13px] leading-[1.6] font-mono p-4 rounded-xl text-white/90 resize-none focus:outline-none focus:border-white/20 transition-colors"
+                style={{ 
+                  fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+                  whiteSpace: 'pre-wrap',
+                  wordBreak: 'break-word'
+                }}
                 placeholder="Messages will appear here..."
               />
             </div>
@@ -372,7 +377,7 @@ ${selectedMessages}`
             {/* Summary Content */}
             <div className="flex-1 min-h-0 overflow-y-auto bg-white/[0.02] border border-white/[0.08] rounded-xl p-6 mb-4">
               <div className="prose prose-invert prose-sm max-w-none">
-                <pre className="whitespace-pre-wrap font-sans text-[14px] text-white/80 leading-relaxed">
+                <pre className="whitespace-pre-wrap font-sans text-[14px] leading-[1.7] text-white/80">
                   {summary}
                 </pre>
               </div>

@@ -241,13 +241,29 @@ function formatMessages(messages) {
   return messages.map((msg, i) => {
     const prev = messages[i - 1];
     
-    // Compact format for consecutive messages from same sender
-    if (prev && prev.sender === msg.sender) {
-      return `> ${msg.text}`;
+    // Build the message text
+    let formattedMsg = "";
+    
+    // Check if this is a continuation from same sender
+    const isContinuation = prev && prev.sender === msg.sender;
+    
+    if (isContinuation) {
+      // Compact format for consecutive messages
+      if (msg.replyTo) {
+        formattedMsg = `> ↪ Reply to: "${msg.replyTo}"\n> ${msg.text}`;
+      } else {
+        formattedMsg = `> ${msg.text}`;
+      }
+    } else {
+      // Full format with timestamp and sender
+      if (msg.replyTo) {
+        formattedMsg = `\n[${msg.timestamp}] ${msg.sender}:\n  ↪ Reply: "${msg.replyTo}"\n  ${msg.text}`;
+      } else {
+        formattedMsg = `\n[${msg.timestamp}] ${msg.sender}: ${msg.text}`;
+      }
     }
     
-    // Full format with timestamp and sender
-    return `\n[${msg.timestamp}] ${msg.sender}: ${msg.text}`;
+    return formattedMsg;
   }).join("\n").trim();
 }
 
@@ -326,24 +342,26 @@ function extractTextWithEmojis(element) {
   let text = "";
   
   // Traverse all child nodes
-  element.childNodes.forEach(node => {
+  const traverse = (node) => {
     if (node.nodeType === Node.TEXT_NODE) {
       // Regular text
       text += node.textContent;
     } else if (node.nodeType === Node.ELEMENT_NODE) {
-      if (node.tagName === 'IMG' && node.classList.contains('_1f4bz')) {
-        // WhatsApp emoji image - get the alt text (actual emoji)
-        text += node.alt || '';
-      } else if (node.tagName === 'SPAN') {
-        // Nested span, recurse
-        text += extractTextWithEmojis(node);
+      // Check for emoji image (WhatsApp uses img tags for emojis)
+      if (node.tagName === 'IMG') {
+        // Try multiple attributes where emoji might be stored
+        const emoji = node.getAttribute('alt') || 
+                     node.getAttribute('data-plain-text') ||
+                     node.getAttribute('aria-label') || '';
+        text += emoji;
       } else {
-        // Other elements, try to get text content
-        text += node.textContent || '';
+        // Recurse into child nodes
+        node.childNodes.forEach(child => traverse(child));
       }
     }
-  });
+  };
   
+  traverse(element);
   return text;
 }
 
