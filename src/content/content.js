@@ -97,23 +97,77 @@ function captureCurrentViewport() {
   });
 }
 
+// function updateCaptureUI() {
+//   const overlay = document.getElementById('wa-capture-overlay');
+//   if (overlay && captureActive) {
+//     const count = capturedMessagesMap.size;
+//     overlay.innerHTML = `
+//       <div style="font-size: 40px; margin-bottom: 16px; opacity: 0.9;">📥</div>
+//       <div style="font-size: 15px; font-weight: 500; margin-bottom: 8px; opacity: 0.6;">Capturing Messages</div>
+//       <div style="font-size: 48px; font-weight: 600; color: #25D366; margin: 16px 0; letter-spacing: -0.02em;">${count}</div>
+//       <div style="font-size: 13px; color: rgba(255,255,255,0.4); margin-bottom: 20px;">messages captured</div>
+//       <div style="font-size: 12px; color: rgba(255,255,255,0.3); padding: 12px 20px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
+//         Scroll and click the last message
+//       </div>
+//     `;
+//   }
+// }
+
+// --- SMART PROCESSING (OPTIMIZED) ---
+
 function updateCaptureUI() {
   const overlay = document.getElementById('wa-capture-overlay');
   if (overlay && captureActive) {
-    const count = capturedMessagesMap.size;
+    // Improved UI: Removed misleading count, added clearer visual cues
     overlay.innerHTML = `
-      <div style="font-size: 40px; margin-bottom: 16px; opacity: 0.9;">📥</div>
-      <div style="font-size: 15px; font-weight: 500; margin-bottom: 8px; opacity: 0.6;">Capturing Messages</div>
-      <div style="font-size: 48px; font-weight: 600; color: #25D366; margin: 16px 0; letter-spacing: -0.02em;">${count}</div>
-      <div style="font-size: 13px; color: rgba(255,255,255,0.4); margin-bottom: 20px;">messages captured</div>
-      <div style="font-size: 12px; color: rgba(255,255,255,0.3); padding: 12px 20px; background: rgba(255,255,255,0.03); border-radius: 8px; border: 1px solid rgba(255,255,255,0.05);">
-        Scroll and click the last message
+      <div style="margin-bottom: 20px;">
+        <span style="font-size: 40px; display: inline-block; animation: wa-bounce 1.5s infinite ease-in-out;">👇</span>
       </div>
+      
+      <div style="font-size: 18px; font-weight: 600; color: #fff; margin-bottom: 8px; letter-spacing: -0.01em;">
+        Select End Message
+      </div>
+      
+      <div style="font-size: 14px; color: rgba(255,255,255,0.6); margin-bottom: 24px; line-height: 1.5; max-width: 260px; margin-left: auto; margin-right: auto;">
+        Scroll down to the last message of the conversation and click it.
+      </div>
+
+      <div style="
+        display: inline-flex; 
+        align-items: center; 
+        gap: 8px; 
+        background: rgba(37, 211, 102, 0.1); 
+        border: 1px solid rgba(37, 211, 102, 0.25); 
+        padding: 8px 16px; 
+        border-radius: 99px;
+      ">
+        <span style="
+          width: 8px; 
+          height: 8px; 
+          background: #25D366; 
+          border-radius: 50%; 
+          box-shadow: 0 0 10px #25D366;
+          animation: wa-pulse 2s infinite;
+        "></span>
+        <span style="font-size: 11px; font-weight: 700; color: #25D366; letter-spacing: 0.5px; text-transform: uppercase;">
+          Selection Active
+        </span>
+      </div>
+
+      <style>
+        @keyframes wa-bounce { 
+          0%, 100% { transform: translateY(0); opacity: 0.8; } 
+          50% { transform: translateY(8px); opacity: 1; } 
+        }
+        @keyframes wa-pulse {
+          0% { opacity: 1; transform: scale(1); }
+          50% { opacity: 0.4; transform: scale(0.9); }
+          100% { opacity: 1; transform: scale(1); }
+        }
+      </style>
     `;
   }
 }
-
-// --- SMART PROCESSING (OPTIMIZED) ---
 
 async function performIntelligentCapture(startData, endData) {
   console.log("🚀 Starting intelligent capture");
@@ -142,64 +196,124 @@ async function performIntelligentCapture(startData, endData) {
   extractAndSendRange(startData, endData);
 }
 
-// --- ENHANCED DATA EXTRACTION (WITH EMOJI SUPPORT) ---
+
+// message having system calls
+// function extractAndSendRange(startData, endData) {
+//   console.log("📦 Extracting message range");
+//   showProgressOverlay("Finalizing...", 80);
+  
+//   let allMessages = Array.from(capturedMessagesMap.values());
+  
+//   // Filter out invalid messages
+//   allMessages = allMessages.filter(m => m && m.text && m.text.trim().length > 0);
+  
+//   if (allMessages.length === 0) {
+//     return sendError("No messages found");
+//   }
+
+//   console.log(`Valid messages: ${allMessages.length}`);
+
+//   // Find start and end indices with multiple strategies
+//   let startIndex = findMessageIndex(allMessages, startData);
+//   let endIndex = findMessageIndex(allMessages, endData);
+
+//   console.log("Initial Indices - Start:", startIndex, "End:", endIndex);
+
+//   // CRITICAL FIX: If we can't find exact matches, try timestamp-based ordering
+//   if (startIndex === -1 || endIndex === -1) {
+//     console.log("⚠️ Using fallback: timestamp-based range detection");
+    
+//     // Find by timestamp comparison
+//     const startTime = parseTime(startData.timestamp);
+//     const endTime = parseTime(endData.timestamp);
+    
+//     startIndex = allMessages.findIndex(m => parseTime(m.timestamp) >= startTime);
+//     endIndex = allMessages.findIndex(m => parseTime(m.timestamp) >= endTime);
+    
+//     if (startIndex === -1) startIndex = 0;
+//     if (endIndex === -1) endIndex = allMessages.length - 1;
+//   }
+
+//   // Ensure correct order
+//   if (startIndex > endIndex) {
+//     [startIndex, endIndex] = [endIndex, startIndex];
+//   }
+
+//   console.log("Final Indices - Start:", startIndex, "End:", endIndex);
+
+//   // Extract range - STRICT BOUNDARY
+//   let selectedMessages = allMessages.slice(startIndex, endIndex + 1);
+  
+//   if (selectedMessages.length === 0) {
+//     return sendError("Could not extract message range");
+//   }
+
+//   // Deduplicate
+//   selectedMessages = deduplicateMessages(selectedMessages);
+
+//   console.log(`Final count: ${selectedMessages.length} messages`);
+
+//   // Format with TOKEN OPTIMIZATION
+//   const formattedOutput = formatMessagesOptimized(selectedMessages);
+
+//   showProgressOverlay("Complete! ✅", 100);
+
+//   setTimeout(() => {
+//     chrome.runtime.sendMessage({
+//       action: "SELECTION_COMPLETE",
+//       data: formattedOutput,
+//     });
+//     disableSelectionMode();
+//   }, 400);
+// }
+
+// --- ENHANCED DATA EXTRACTION (FIXED SORTING) ---
+
 
 function extractAndSendRange(startData, endData) {
-  console.log("📦 Extracting message range");
+  console.log("📦 Extracting message range...");
   showProgressOverlay("Finalizing...", 80);
   
+  // 1. Convert Map to Array
   let allMessages = Array.from(capturedMessagesMap.values());
   
-  // Filter out invalid messages
+  // 2. Filter invalid
   allMessages = allMessages.filter(m => m && m.text && m.text.trim().length > 0);
   
-  if (allMessages.length === 0) {
-    return sendError("No messages found");
-  }
+  if (allMessages.length === 0) return sendError("No messages found");
 
-  console.log(`Valid messages: ${allMessages.length}`);
+  // 3. CRITICAL FIX: SORT CHRONOLOGICALLY 📅
+  // This fixes the bug where older messages appear if you scrolled up
+  allMessages.sort((a, b) => {
+    return parseWaDate(a.timestamp) - parseWaDate(b.timestamp);
+  });
 
-  // Find start and end indices with multiple strategies
+  // 4. Find Start/End Indices (AFTER Sorting)
   let startIndex = findMessageIndex(allMessages, startData);
   let endIndex = findMessageIndex(allMessages, endData);
 
-  console.log("Initial Indices - Start:", startIndex, "End:", endIndex);
+  console.log(`Sorted Indices - Start: ${startIndex}, End: ${endIndex}`);
 
-  // CRITICAL FIX: If we can't find exact matches, try timestamp-based ordering
-  if (startIndex === -1 || endIndex === -1) {
-    console.log("⚠️ Using fallback: timestamp-based range detection");
-    
-    // Find by timestamp comparison
-    const startTime = parseTime(startData.timestamp);
-    const endTime = parseTime(endData.timestamp);
-    
-    startIndex = allMessages.findIndex(m => parseTime(m.timestamp) >= startTime);
-    endIndex = allMessages.findIndex(m => parseTime(m.timestamp) >= endTime);
-    
-    if (startIndex === -1) startIndex = 0;
-    if (endIndex === -1) endIndex = allMessages.length - 1;
-  }
+  // Fallback: If exact ID lost, try timestamp proximity
+  if (startIndex === -1) startIndex = allMessages.findIndex(m => m.text === startData.text);
+  if (endIndex === -1) endIndex = allMessages.findIndex(m => m.text === endData.text);
 
-  // Ensure correct order
+  // Safety: If still not found, default to edges
+  if (startIndex === -1) startIndex = 0;
+  if (endIndex === -1) endIndex = allMessages.length - 1;
+
+  // Ensure Start is before End (Swap if needed)
   if (startIndex > endIndex) {
     [startIndex, endIndex] = [endIndex, startIndex];
   }
 
-  console.log("Final Indices - Start:", startIndex, "End:", endIndex);
-
-  // Extract range - STRICT BOUNDARY
+  // 5. Slice & Deduplicate
   let selectedMessages = allMessages.slice(startIndex, endIndex + 1);
-  
-  if (selectedMessages.length === 0) {
-    return sendError("Could not extract message range");
-  }
-
-  // Deduplicate
   selectedMessages = deduplicateMessages(selectedMessages);
 
   console.log(`Final count: ${selectedMessages.length} messages`);
 
-  // Format with TOKEN OPTIMIZATION
+  // 6. Format
   const formattedOutput = formatMessagesOptimized(selectedMessages);
 
   showProgressOverlay("Complete! ✅", 100);
@@ -212,6 +326,55 @@ function extractAndSendRange(startData, endData) {
     disableSelectionMode();
   }, 400);
 }
+
+
+
+
+// HELPER: Robust Date Parser for WhatsApp Timestamps
+function parseWaDate(timestampStr) {
+  try {
+    // Expected format: "11:55 am, 10/1/2026" or just "11:55 am"
+    // We normalize it to a comparable number
+    
+    if (!timestampStr) return 0;
+    
+    // Split Time and Date
+    // standard format: "HH:MM am/pm, DD/MM/YYYY"
+    const parts = timestampStr.split(',');
+    
+    let timePart = parts[0].trim();
+    let datePart = parts.length > 1 ? parts[1].trim() : "1/1/1970"; // Default to epoch if no date
+
+    // Parse Time
+    const timeMatch = timePart.match(/(\d{1,2}):(\d{2})\s*(am|pm)/i);
+    let hours = 0, minutes = 0;
+    if (timeMatch) {
+        hours = parseInt(timeMatch[1]);
+        minutes = parseInt(timeMatch[2]);
+        const period = timeMatch[3].toLowerCase();
+        if (period === 'pm' && hours !== 12) hours += 12;
+        if (period === 'am' && hours === 12) hours = 0;
+    }
+
+    // Parse Date (Assume DD/MM/YYYY or MM/DD/YYYY based on locale, usually DD/MM in WA Web)
+    const dateMatch = datePart.match(/(\d{1,2})[\/\-\.](\d{1,2})[\/\-\.](\d{4})/);
+    let year = 1970, month = 0, day = 1;
+    if (dateMatch) {
+        day = parseInt(dateMatch[1]);
+        month = parseInt(dateMatch[2]) - 1; // JS months are 0-indexed
+        year = parseInt(dateMatch[3]);
+    }
+    
+    // Create Date Object
+    // Note: If WA swaps Month/Day based on locale, this might swap them, 
+    // but RELATIVE order remains correct for sorting within same locale.
+    return new Date(year, month, day, hours, minutes).getTime();
+
+  } catch (e) {
+    return 0; // Push to start if parse fails
+  }
+}
+
 
 // Helper: Parse time for comparison (handles AM/PM)
 function parseTime(timeStr) {
