@@ -311,7 +311,7 @@ Guidelines:
         <div className="w-16 h-16 bg-[#25D366] rounded-2xl flex items-center justify-center mb-6 shadow-[0_0_30px_rgba(37,211,102,0.4)]">
           <svg width="32" height="32" viewBox="0 0 24 24" fill="white"><path d="M12 2C6.48 2 2 6.48 2 12C2 17.52 6.48 22 12 22C17.52 22 22 17.52 22 12C22 6.48 17.52 2 12 2ZM11 7H13V9H11V7ZM11 11H13V17H11V11Z"/></svg>
         </div>
-        <h1 className="text-2xl font-bold mb-2">Welcome to WA Insights</h1>
+        <h1 className="text-2xl font-bold mb-2">Welcome to Crux</h1>
         <p className="text-white/50 text-[13px] mb-8 max-w-xs">Enter your Gemini API Key to start.</p>
         <div className="w-full max-w-xs space-y-4">
           <input 
@@ -366,8 +366,8 @@ Guidelines:
             )}
             
             <div>
-              <h1 className="font-semibold text-sm tracking-wide">WA Insights</h1>
-              {messageCount > 0 && view !== "home" && <p className="text-[10px] text-white/40">{messageCount} msgs</p>}
+              <h1 className="font-semibold text-sm tracking-wide">Crux</h1>
+              {/* {messageCount > 0 && view !== "home" && <p className="text-[10px] text-white/40">{messageCount} msgs</p>} */}
             </div>
           </div>
           <div className="flex gap-2 items-center">
