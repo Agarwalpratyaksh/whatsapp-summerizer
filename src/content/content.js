@@ -303,6 +303,94 @@ function formatMessagesOptimized(messages) {
 
 // --- FIXED EXTRACTION LOGIC (SEPARATES REPLIES) ---
 
+// function extractMessageData(row) {
+//   try {
+//     const copyable = row.querySelector(".copyable-text");
+//     const timeEl = row.querySelector('span[data-testid="msg-time"]') || 
+//                    row.querySelector('span[dir="auto"]._amig');
+
+//     let text = "";
+//     let sender = "System";
+//     let timestamp = timeEl ? timeEl.innerText.trim() : "";
+//     let type = "system";
+//     let replyContext = "";
+
+//     if (copyable) {
+//       // 1. Metadata
+//       const dateStr = copyable.getAttribute("data-pre-plain-text") || "";
+//       const match = dateStr.match(/\[(.*?)\]\s*(.*?):/);
+//       if (match) {
+//         timestamp = match[1].trim();
+//         sender = match[2].trim();
+//       }
+
+//       // 2. Reply Detection
+//       const quoteContainer = row.querySelector('div[aria-label="Quoted message"]');
+//       if (quoteContainer) {
+//         const rawQuote = quoteContainer.innerText.replace(/\n/g, ' ').substring(0, 40);
+//         replyContext = `[Replying to: "${rawQuote}..."] `;
+//       }
+
+//       // 3. Extraction
+//       const realMessageNode = copyable.querySelector('span.selectable-text');
+//       if (realMessageNode) {
+//         text = extractTextWithEmojis(realMessageNode);
+//       } else {
+//         // Fallback: Clone and clean
+//         const clone = copyable.cloneNode(true);
+//         const quoteInClone = clone.querySelector('div[aria-label="Quoted message"]');
+//         if (quoteInClone) quoteInClone.remove();
+//         text = extractTextWithEmojis(clone);
+//       }
+
+//       // 4. CLEANUP (The Fix for "11:55 am") 🧹
+//       // If the text ends with the timestamp, slice it off
+//       if (timestamp && text.trim().endsWith(timestamp)) {
+//          text = text.trim().slice(0, -timestamp.length).trim();
+//       }
+//       // Regex backup: Remove trailing time pattern "12:00 pm" if it appears at the very end
+//       text = text.replace(/\d{1,2}:\d{2}\s?[ap]m$/i, '').trim();
+
+//       type = "text";
+//     } else {
+//       // System/Media logic...
+//       const img = row.querySelector("img");
+//       if (img && img.src && img.src.includes("sticker")) {
+//         text = "[Sticker]";
+//         type = "media";
+//       } else if (img || row.querySelector('span[data-testid="media-play"]')) {
+//         text = "[Media/Photo]";
+//         type = "media";
+//       } else if (row.innerText.includes("deleted")) {
+//         text = "[Deleted Message]";
+//         type = "system";
+//       } else {
+//         text = row.innerText.replace(/\d{1,2}:\d{2}\s?[ap]m/i, "").trim();
+//         type = "system";
+//       }
+//     }
+
+//     const uniqueId = row.getAttribute("data-id") || `${timestamp}_${sender}_${text.substring(0,15)}`;
+//     const finalText = replyContext ? `${replyContext}\n${text}` : text;
+
+//     return {
+//       id: uniqueId,
+//       timestamp,
+//       sender,
+//       text: finalText,
+//       rawText: text,
+//       preview: `${sender}: ${text.substring(0, 30)}...`,
+//       type,
+//     };
+//   } catch (error) {
+//     console.error("Extraction Error:", error);
+//     return null;
+//   }
+// }
+
+
+// --- ENHANCED EXTRACTION (Name & Emoji Fix) ---
+
 function extractMessageData(row) {
   try {
     const copyable = row.querySelector(".copyable-text");
@@ -316,39 +404,46 @@ function extractMessageData(row) {
     let replyContext = "";
 
     if (copyable) {
-      // 1. Metadata
+      // 1. Get Metadata (Fallback ID)
       const dateStr = copyable.getAttribute("data-pre-plain-text") || "";
       const match = dateStr.match(/\[(.*?)\]\s*(.*?):/);
+      
       if (match) {
         timestamp = match[1].trim();
-        sender = match[2].trim();
+        sender = match[2].trim(); // This is often "+91 863..."
       }
 
-      // 2. Reply Detection
+      // 2. SMART NAME RECOVERY (The Fix) 🧠
+      // If sender looks like a phone number, try to find the "Visual Name" (e.g., "~ Mouli")
+      if (isPhoneNumber(sender)) {
+         const visualName = findVisualName(row, sender, timestamp);
+         if (visualName) {
+             sender = visualName; // Override number with name!
+         }
+      }
+
+      // 3. Reply Detection
       const quoteContainer = row.querySelector('div[aria-label="Quoted message"]');
       if (quoteContainer) {
         const rawQuote = quoteContainer.innerText.replace(/\n/g, ' ').substring(0, 40);
         replyContext = `[Replying to: "${rawQuote}..."] `;
       }
 
-      // 3. Extraction
+      // 4. Extract Real Message
       const realMessageNode = copyable.querySelector('span.selectable-text');
       if (realMessageNode) {
         text = extractTextWithEmojis(realMessageNode);
       } else {
-        // Fallback: Clone and clean
         const clone = copyable.cloneNode(true);
         const quoteInClone = clone.querySelector('div[aria-label="Quoted message"]');
         if (quoteInClone) quoteInClone.remove();
         text = extractTextWithEmojis(clone);
       }
 
-      // 4. CLEANUP (The Fix for "11:55 am") 🧹
-      // If the text ends with the timestamp, slice it off
+      // Cleanup timestamps from text
       if (timestamp && text.trim().endsWith(timestamp)) {
          text = text.trim().slice(0, -timestamp.length).trim();
       }
-      // Regex backup: Remove trailing time pattern "12:00 pm" if it appears at the very end
       text = text.replace(/\d{1,2}:\d{2}\s?[ap]m$/i, '').trim();
 
       type = "text";
@@ -387,6 +482,59 @@ function extractMessageData(row) {
     return null;
   }
 }
+
+// Helper: Check if string is just a phone number
+function isPhoneNumber(str) {
+    // Matches +91 999... or +1 202... or just digits/dashes
+    return /^[\+\d\s\-\(\)]+$/.test(str) && str.replace(/\D/g, '').length > 6;
+}
+
+// Helper: Find the visual name displayed in the DOM
+function findVisualName(row, originalNumber, timestamp) {
+    // Strategy: Look for spans with dir="auto" that are NOT the message text
+    // The name is usually "above" the message text.
+    
+    // 1. Get all text spans
+    const candidates = Array.from(row.querySelectorAll('span[dir="auto"]'));
+    
+    // 2. Identify the message text to exclude it
+    const msgNode = row.querySelector('span.selectable-text');
+    const msgText = msgNode ? msgNode.innerText : "";
+    
+    // 3. Identify quoted text to exclude it
+    const quoteNode = row.querySelector('div[aria-label="Quoted message"]');
+    
+    for (const span of candidates) {
+        const text = span.innerText.trim();
+        
+        // Filter out junk
+        if (!text) continue;
+        if (text === msgText) continue; // It's the message
+        if (text === timestamp) continue; // It's the time
+        if (text === originalNumber) continue; // It's just the number again
+        if (quoteNode && quoteNode.contains(span)) continue; // It's inside a quote reply
+        
+        // Filter out button labels or system text
+        if (text.toLowerCase() === "edited") continue;
+        if (text.toLowerCase() === "read more") continue;
+
+        // CHECK: "Push Names" often start with ~
+        if (text.startsWith('~')) {
+            return text; // Found it! e.g., "~ Mouli"
+        }
+        
+        // CHECK: Group Display Colors
+        // Names in groups often have specific color classes (color-1 to color-20)
+        // We can't check obfuscated classes, but we can check if it looks like a name
+        // (Has letters, short length)
+        if (/[a-zA-Z]/.test(text) && text.length < 25) {
+            return text; // Likely the name (e.g., "Vipul Kohli")
+        }
+    }
+    
+    return null; // Failed, keep original number
+}
+
 
 // THE EMOJI FIXER FUNCTION
 function getDeepText(element) {

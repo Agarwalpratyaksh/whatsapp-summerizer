@@ -6,51 +6,80 @@ function App() {
   const [apiKey, setApiKey] = useState("");
   const [view, setView] = useState("loading"); // loading | setup | home | settings | selecting | preview | chat
   
-  // App Logic State
+  // Logic State
   const [status, setStatus] = useState("");
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
+  
+  // Active Session Data
+  const [currentSessionId, setCurrentSessionId] = useState(null);
   const [selectedMessages, setSelectedMessages] = useState("");
   const [messageCount, setMessageCount] = useState(0);
   const [chatHistory, setChatHistory] = useState([]); 
   const [inputMessage, setInputMessage] = useState("");
   
+  // History State
+  const [sessions, setSessions] = useState([]);
+
   const chatEndRef = useRef(null);
 
   // --- INITIALIZATION ---
   useEffect(() => {
     const storedKey = localStorage.getItem("wa_gemini_key");
-    const savedMsg = localStorage.getItem("wa_context");
-    const savedChat = localStorage.getItem("wa_chat");
+    const storedSessions = localStorage.getItem("wa_sessions");
 
     if (storedKey) {
       setApiKey(storedKey);
-      if (savedMsg) {
-        setSelectedMessages(savedMsg);
-        setMessageCount(savedMsg.split('\n').filter(l => l.includes('[') && l.includes(']')).length);
-        if (savedChat) {
-          try {
-            setChatHistory(JSON.parse(savedChat));
-            setView("chat");
-          } catch (e) { setView("home"); }
-        } else {
-          setView("home");
+      if (storedSessions) {
+        try {
+          const parsed = JSON.parse(storedSessions);
+          setSessions(parsed);
+        } catch (e) {
+          console.error("Corrupt history", e);
         }
-      } else {
-        setView("home");
       }
+      setView("home");
     } else {
       setView("setup");
     }
   }, []);
 
   // --- PERSISTENCE ---
+  
+  // Save API Key
   useEffect(() => {
     if (apiKey) localStorage.setItem("wa_gemini_key", apiKey);
-    if (selectedMessages) localStorage.setItem("wa_context", selectedMessages);
-    if (chatHistory.length > 0) localStorage.setItem("wa_chat", JSON.stringify(chatHistory));
-  }, [apiKey, selectedMessages, chatHistory]);
+  }, [apiKey]);
 
+  // Auto-Save Current Session to History
+  useEffect(() => {
+    if (!currentSessionId || !selectedMessages) return;
+
+    setSessions(prevSessions => {
+      const existingIdx = prevSessions.findIndex(s => s.id === currentSessionId);
+      const updatedSession = {
+        id: currentSessionId,
+        date: existingIdx > -1 ? prevSessions[existingIdx].date : Date.now(),
+        preview: selectedMessages.substring(0, 50) + "...", // Short preview for list
+        context: selectedMessages,
+        history: chatHistory,
+        count: messageCount
+      };
+
+      let newSessions;
+      if (existingIdx > -1) {
+        newSessions = [...prevSessions];
+        newSessions[existingIdx] = updatedSession;
+      } else {
+        newSessions = [updatedSession, ...prevSessions];
+      }
+
+      localStorage.setItem("wa_sessions", JSON.stringify(newSessions));
+      return newSessions;
+    });
+  }, [chatHistory, selectedMessages, currentSessionId, messageCount]);
+
+  // Scroll to bottom
   useEffect(() => {
     chatEndRef.current?.scrollIntoView({ behavior: "smooth" });
   }, [chatHistory, loading]);
@@ -67,10 +96,11 @@ function App() {
           setError(data);
           setView("home");
         } else {
+          // NEW CAPTURE FLOW
           setSelectedMessages(data);
           setMessageCount(data.split('\n').filter(l => l.includes('[') && l.includes(']')).length);
           setStatus("✅ Capture complete!");
-          setView("preview");
+          setView("preview"); // Go to preview first
         }
       }
     };
@@ -82,7 +112,7 @@ function App() {
   }, []);
 
   // --- ACTIONS ---
-  
+
   const handleSaveKey = (key) => {
     if (!key.trim().startsWith("AIza")) {
       setError("Invalid Key. It usually starts with 'AIza'.");
@@ -97,14 +127,22 @@ function App() {
   const handleRemoveKey = () => {
     localStorage.removeItem("wa_gemini_key");
     setApiKey("");
-    resetAll();
+    setSessions([]);
+    localStorage.removeItem("wa_sessions");
     setView("setup");
   };
 
   const startSelection = async () => {
     try {
+      // Clear current session data for a new capture
+      setCurrentSessionId(null);
+      setSelectedMessages("");
+      setChatHistory([]);
+      setMessageCount(0);
+      
       setView("selecting");
       setStatus("🎯 Click the FIRST message");
+      
       const [tab] = await chrome.tabs.query({ active: true, currentWindow: true });
       if (!tab.url.includes("web.whatsapp.com")) throw new Error("Open WhatsApp Web first");
       await chrome.tabs.sendMessage(tab.id, { action: "ENABLE_SELECTION_MODE" });
@@ -123,29 +161,38 @@ function App() {
     setStatus("");
   };
 
-  const resetAll = () => {
-    setSelectedMessages("");
+  // Start Analysis (From Preview)
+  const initializeNewSession = () => {
+    const newId = Date.now().toString();
+    setCurrentSessionId(newId);
     setChatHistory([]);
-    setMessageCount(0);
-    setStatus("");
-    setError("");
-    localStorage.removeItem("wa_context");
-    localStorage.removeItem("wa_chat");
-    if (apiKey) setView("home");
+    setView("chat");
+    generateAIResponse("Summarize this conversation in 3 bullet points.", newId);
   };
 
-  const clearChatOnly = () => {
-    setChatHistory([]);
-    localStorage.removeItem("wa_chat");
+  // Resume Old Session (From Home)
+  const resumeSession = (session) => {
+    setCurrentSessionId(session.id);
+    setSelectedMessages(session.context);
+    setChatHistory(session.history || []);
+    setMessageCount(session.count || 0);
+    setView("chat");
+  };
+
+  const deleteSession = (e, id) => {
+    e.stopPropagation(); // Prevent clicking the parent container
+    const newSessions = sessions.filter(s => s.id !== id);
+    setSessions(newSessions);
+    localStorage.setItem("wa_sessions", JSON.stringify(newSessions));
   };
 
   const goBack = () => {
-    if (view === "chat") setView("preview");
+    if (view === "chat") setView("home"); // FIXED: Chat -> Home
     else if (view === "preview") setView("home");
     else if (view === "settings") setView("home");
   };
 
-  // --- AI ENGINE (FIXED) ---
+  // --- AI ENGINE ---
 
   const handleSendMessage = async () => {
     if (!inputMessage.trim()) return;
@@ -154,11 +201,11 @@ function App() {
     await generateAIResponse(userQ);
   };
 
-  const generateAIResponse = async (query) => {
+  const generateAIResponse = async (query, specificSessionId = null) => {
     if (!apiKey) { setError("⚠️ Missing API Key"); return; }
     
-    const newHistory = [...chatHistory, { role: "user", text: query }];
-    setChatHistory(newHistory);
+    // Optimistic Update
+    setChatHistory(prev => [...prev, { role: "user", text: query }]);
     setLoading(true);
 
     try {
@@ -176,9 +223,9 @@ CONTEXT:
 ${selectedMessages}
 """
 Guidelines: 
-1. Be Concise. Use bullet points for lists.
-2. Use **Bold** for important names or keys.
-3. Be Friendly . Use Emojis.
+1. Be Concise. Use bullet points.
+2. Use **Bold** for keys.
+3. Be Friendly & Safe. Use Emojis.
 `;
 
       const response = await ai.models.generateContentStream({
@@ -197,7 +244,6 @@ Guidelines:
       setChatHistory(prev => [...prev, { role: "model", text: "..." }]);
 
       for await (const chunk of response) {
-        // --- FIX IS HERE: chunk.text is a PROPERTY, not a function ---
         const chunkText = chunk.text || ""; 
         fullResponse += chunkText;
         
@@ -219,14 +265,12 @@ Guidelines:
 
   // --- COMPONENTS ---
 
-  // Custom Markdown Renderer
   const MarkdownRenderer = ({ text }) => {
     if (!text) return null;
     const lines = text.split('\n');
     return (
       <div className="space-y-1">
         {lines.map((line, i) => {
-          // Bullet Points
           if (line.trim().startsWith('* ') || line.trim().startsWith('- ')) {
              const content = line.trim().substring(2);
              return (
@@ -236,11 +280,9 @@ Guidelines:
                </div>
              );
           }
-          // Headers
           if (line.trim().startsWith('## ')) {
              return <h3 key={i} className="text-[#25D366] font-bold mt-2 mb-1" dangerouslySetInnerHTML={{ __html: formatBold(line.substring(3)) }} />;
           }
-          // Standard Text
           return <p key={i} className="min-h-[1em]" dangerouslySetInnerHTML={{ __html: formatBold(line) }} />;
         })}
       </div>
@@ -262,7 +304,7 @@ Guidelines:
 
   if (view === "loading") return <div className="h-screen bg-[#0A0A0A] flex items-center justify-center text-white/20">Loading...</div>;
 
-  // SETUP VIEW
+  // SETUP
   if (view === "setup") {
     return (
       <div className="h-screen w-full bg-[#0A0A0A] text-white flex flex-col items-center justify-center p-8 text-center animate-fade-in">
@@ -285,7 +327,7 @@ Guidelines:
     );
   }
 
-  // SETTINGS VIEW
+  // SETTINGS
   if (view === "settings") {
     return (
       <div className="h-screen w-full bg-[#0A0A0A] text-white flex flex-col p-6 animate-fade-in">
@@ -298,13 +340,13 @@ Guidelines:
             <label className="text-[12px] font-medium text-white/60 mb-1 block">API Key</label>
             <input type="password" value={apiKey} readOnly className="w-full bg-black/40 border border-white/[0.1] rounded-lg px-3 py-2 text-[13px] text-white/50 font-mono" />
           </div>
-          <button onClick={handleRemoveKey} className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 py-2.5 rounded-lg text-[13px]">Remove Key</button>
+          <button onClick={handleRemoveKey} className="w-full bg-red-500/10 hover:bg-red-500/20 text-red-400 border border-red-500/20 py-2.5 rounded-lg text-[13px]">Logout & Clear All</button>
         </div>
       </div>
     );
   }
 
-  // MAIN UI
+  // MAIN LAYOUT
   return (
     <div className="h-screen w-full bg-[#0A0A0A] text-white flex flex-col font-sans antialiased overflow-hidden">
       
@@ -312,6 +354,7 @@ Guidelines:
       <header className="flex-shrink-0 border-b border-white/[0.08] bg-[#0A0A0A] z-10">
         <div className="px-5 py-3 flex items-center justify-between">
           <div className="flex items-center gap-3">
+            {/* BACK BUTTON LOGIC */}
             {view !== "home" && view !== "selecting" ? (
                <button onClick={goBack} className="w-8 h-8 -ml-2 rounded-full hover:bg-white/[0.05] flex items-center justify-center text-white/80 transition-colors">
                  <span className="text-xl pb-1">←</span>
@@ -321,17 +364,13 @@ Guidelines:
                  <svg width="16" height="16" viewBox="0 0 24 24" fill="white"><path d="M20 2H4c-1.1 0-2 .9-2 2v18l4-4h14c1.1 0 2-.9 2-2V4c0-1.1-.9-2-2-2z"/></svg>
                </div>
             )}
+            
             <div>
               <h1 className="font-semibold text-sm tracking-wide">WA Insights</h1>
-              {messageCount > 0 && <p className="text-[10px] text-white/40">{messageCount} msgs</p>}
+              {messageCount > 0 && view !== "home" && <p className="text-[10px] text-white/40">{messageCount} msgs</p>}
             </div>
           </div>
           <div className="flex gap-2 items-center">
-             {view !== "home" && (
-              <button onClick={resetAll} className="text-[11px] bg-white/[0.05] hover:bg-white/[0.1] px-3 py-1.5 rounded-md transition-colors">
-                New Chat
-              </button>
-            )}
             <button onClick={() => setView("settings")} className="w-8 h-8 rounded-full hover:bg-white/[0.05] flex items-center justify-center text-white/60 hover:text-white transition-colors">⚙️</button>
           </div>
         </div>
@@ -348,24 +387,66 @@ Guidelines:
       {/* MAIN CONTENT */}
       <main className="flex-1 overflow-y-auto relative scroll-smooth">
         
+        {/* --- HOME VIEW (Redesigned) --- */}
         {view === "home" && (
-          <div className="h-full flex flex-col items-center justify-center p-8 text-center space-y-6 animate-fade-in">
-            <div className="w-20 h-20 bg-white/[0.03] rounded-2xl border border-white/[0.08] flex items-center justify-center mb-2">
-              <span className="text-4xl">✨</span>
-            </div>
-            <div>
-              <h2 className="text-xl font-semibold mb-2">Ready to Analyze</h2>
-              <p className="text-[13px] text-white/40 max-w-[260px] mx-auto leading-relaxed">
-                Open a chat, select messages, and uncover insights with your personal AI.
-              </p>
-            </div>
-            <button onClick={startSelection} className="w-full max-w-xs bg-[#25D366] hover:bg-[#20BD5A] text-black font-semibold py-3.5 rounded-xl transition-all shadow-[0_4px_20px_rgba(37,211,102,0.2)] hover:shadow-[0_4px_25px_rgba(37,211,102,0.3)] active:scale-95 text-[14px]">
-              Select Messages
-            </button>
-            {localStorage.getItem("wa_context") && (
-              <button onClick={() => setView("chat")} className="text-[12px] text-white/40 hover:text-white transition-colors underline decoration-white/20 underline-offset-4">
-                Resume previous session
+          <div className="min-h-full p-6 flex flex-col animate-fade-in">
+            
+            {/* Hero Section */}
+            <div className="bg-white/[0.03] border border-white/[0.08] rounded-2xl p-6 text-center mb-8">
+              <div className="w-14 h-14 bg-[#25D366]/20 rounded-xl flex items-center justify-center mx-auto mb-4 text-2xl">
+                 ✨
+              </div>
+              <h2 className="text-lg font-semibold mb-2">New Analysis</h2>
+              <p className="text-[13px] text-white/50 mb-6">Capture a new WhatsApp conversation.</p>
+              <button 
+                onClick={startSelection} 
+                className="w-full bg-[#25D366] hover:bg-[#20BD5A] text-black font-semibold py-3 rounded-xl transition-all shadow-[0_4px_15px_rgba(37,211,102,0.2)] text-[14px]"
+              >
+                Start New Chat
               </button>
+            </div>
+
+            {/* History Section */}
+            <h3 className="text-[12px] font-semibold text-white/40 uppercase tracking-wider mb-4 px-1">Recent Chats</h3>
+            
+            {sessions.length === 0 ? (
+              <div className="text-center py-10 opacity-30 text-[13px]">
+                No history yet. Start a chat!
+              </div>
+            ) : (
+              <div className="space-y-3 pb-4">
+                {sessions.map((session) => (
+                  <div 
+                    key={session.id} 
+                    onClick={() => resumeSession(session)}
+                    className="group bg-[#1A1A1A] border border-white/[0.05] hover:border-white/[0.15] rounded-xl p-4 cursor-pointer transition-all active:scale-[0.98]"
+                  >
+                    <div className="flex justify-between items-start mb-2">
+                      <div className="flex items-center gap-2">
+                         <span className="text-lg">💬</span>
+                         <span className="text-[13px] font-medium text-white/90">
+                           {new Date(session.date).toLocaleDateString()} 
+                           <span className="opacity-50 ml-1.5 text-[11px] font-normal">{new Date(session.date).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'})}</span>
+                         </span>
+                      </div>
+                      <button 
+                        onClick={(e) => deleteSession(e, session.id)} 
+                        className="text-white/20 hover:text-red-400 p-1.5 -mr-2 -mt-2 rounded-md transition-colors"
+                      >
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M18 6L6 18M6 6l12 12"/></svg>
+                      </button>
+                    </div>
+                    <p className="text-[12px] text-white/50 line-clamp-2 leading-relaxed">
+                      {session.preview.replace(/\n/g, ' ')}
+                    </p>
+                    <div className="mt-3 flex items-center gap-2 text-[10px] text-white/30">
+                       <span className="bg-white/[0.05] px-1.5 py-0.5 rounded text-[#25D366]">{session.count} msgs</span>
+                       <span>•</span>
+                       <span>{session.history.length} AI turns</span>
+                    </div>
+                  </div>
+                ))}
+              </div>
             )}
           </div>
         )}
@@ -388,12 +469,9 @@ Guidelines:
               className="flex-1 bg-black/40 border border-white/[0.08] rounded-xl p-4 text-[12px] font-mono text-white/70 resize-none focus:outline-none mb-4"
             />
             <div className="flex gap-3">
-              <button onClick={resetAll} className="flex-1 py-3 rounded-xl border border-white/[0.1] text-[13px] hover:bg-white/[0.05]">Discard</button>
+              <button onClick={() => setView("home")} className="flex-1 py-3 rounded-xl border border-white/[0.1] text-[13px] hover:bg-white/[0.05]">Discard</button>
               <button 
-                onClick={() => {
-                   setView("chat");
-                   if(chatHistory.length === 0) generateAIResponse("Summarize this conversation in 3 bullet points.");
-                }} 
+                onClick={initializeNewSession} 
                 className="flex-[2] bg-[#25D366] text-black font-semibold py-3 rounded-xl text-[13px] hover:bg-[#20BD5A]"
               >
                 Start Analysis
@@ -407,7 +485,7 @@ Guidelines:
             {chatHistory.length === 0 && (
                <div className="flex-1 flex flex-col items-center justify-center text-white/30 space-y-4">
                 <span className="text-3xl opacity-50">🤖</span>
-                <p className="text-[13px]">Ask me anything about the chat!</p>
+                <p className="text-[13px]">Analyzing chat...</p>
               </div>
             )}
             {chatHistory.map((msg, idx) => (
